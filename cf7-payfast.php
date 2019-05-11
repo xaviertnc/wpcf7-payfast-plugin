@@ -1,11 +1,10 @@
 <?php
 /**
  * Plugin Name: Contact Form 7 - PayFAST integration
- * Description: An add-on for Contact Form 7 that forwards form submissions to PayFAST.
- * Version: 1.0.0
+ * Description: A Contact Form 7 extension that redirects to PayFAST on submit.
+ * Version: 1.0.1
  * Author: C. Moller
  * Author URI: http://www.webchamp.co.za
- * Text Domain: nm
  * License: GPLv3
  * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
  * GitHub Plugin URI: https://github.com/xaviertnc/wpcf7-payfast-plugin
@@ -15,8 +14,8 @@
 // ---------------
 // Support Classes
 // ---------------
-include 'Logger.php';
-include 'PayFast.php';
+include_once 'Logger.php';
+include_once 'PayFast.php';
 
 
 
@@ -24,7 +23,7 @@ include 'PayFast.php';
 // Plugin constants
 // ----------------
 
-if ( ! defined(__PAYFAST_MODE__))
+if ( ! defined('__PAYFAST_MODE__'))
 {
   define('__PAYFAST_MODE__', 'SANDBOX'); // or LIVE or SANDBOX
 }
@@ -50,7 +49,8 @@ if ( ! defined('CF7_PAYFAST_PATH'))
  *
  * This class
  *  - checks if the CF7 plugin is present and warns if not
- *  - creates a PAYFAST options tab under CF7 admin
+ *  - creates a tab-panel or metaboxes for PAYFAST settings
+ *    inside the CF7 admin settings page
  *  - adds API hooks for ITN responses
  *  - sends confirmation emails
  *
@@ -58,7 +58,7 @@ if ( ! defined('CF7_PAYFAST_PATH'))
 class CF7_Payfast_Plugin
 {
   /**
-   * CF7_Payfast constructor.
+   * CF7_Payfast_Plugin constructor.
    *
    * The main plugin actions registered for WordPress
    */
@@ -351,7 +351,8 @@ class CF7_Payfast_Plugin
     exit;
   }
 
+
 } // end Class: CF7_Payfast_Plugin
 
 
-new CF7_Payfast_Plugin;
+new CF7_Payfast_Plugin();
