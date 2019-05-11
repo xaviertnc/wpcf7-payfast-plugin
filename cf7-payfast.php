@@ -57,7 +57,6 @@ if ( ! defined('CF7_PAYFAST_PATH'))
  */
 class CF7_Payfast_Plugin
 {
-
   /**
    * CF7_Payfast constructor.
    *
@@ -77,8 +76,8 @@ class CF7_Payfast_Plugin
     add_action('add_meta_boxes', array($this, 'addSettingsMetaBoxes'));
     add_action('wpcf7_editor_panels', array($this, 'addSettingsTabPanel'));
 
-    add_action('wpcf7_after_create', array($this, 'afterCreateContactFrom'));
-    add_action('wpcf7_after_save', array($this, 'afterSaveContactForm'));
+    add_action('wpcf7_after_create', array($this, 'afterContactFromCreate'));
+    add_action('wpcf7_after_save', array($this, 'afterContactFormSave'));
     add_action('wpcf7_mail_sent', array($this, 'afterContactFormMailSent'));
 
     // Disable Contact Form 7 JavaScript completely
@@ -219,7 +218,7 @@ class CF7_Payfast_Plugin
    * @param  [type] $contact_form [description]
    * @return [type]               [description]
    */
-  public function afterCreateContactFrom($contact_form)
+  public function afterContactFromCreate($contact_form)
   {
     $contact_form_id = $contact_form->id();
 
@@ -239,7 +238,7 @@ class CF7_Payfast_Plugin
    * @param  CF7_Form $contact_form CF7 form object?
    * @return NULL
    */
-  public function afterSaveContactForm($contact_form)
+  public function afterContactFormSave($contact_form)
   {
     $contact_form_id = $contact_form->id();
 
@@ -302,12 +301,12 @@ class CF7_Payfast_Plugin
         'return_url'    => get_site_url(null, 'cf7-payfast-success'),
         'cancel_url'    => get_site_url(null, 'cf7-payfast-cancel'),
         'notify_url'    => esc_url(admin_url('admin-post.php')),
-        'name_first'    => $payfast->sandboxMode ? 'Test' : cf7_array_get($postedData, 'your-name', 'noname'),
-        'name_last'     => $payfast->sandboxMode ? 'User' : cf7_array_get($postedData, 'your-lastname'),
-        'email_address' => $payfast->sandboxMode ? 'sbtu01@payfast.co.za' : cf7_array_get($postedData, 'your-email'),
-        'cell_number'   => cf7_array_get($postedData, 'your-phone', '0820000000'),
+        'name_first'    => $payfast->sandboxMode ? 'Test' : $this->arrayGet($postedData, 'your-name', 'noname'),
+        'name_last'     => $payfast->sandboxMode ? 'User' : $this->arrayGet($postedData, 'your-lastname'),
+        'email_address' => $payfast->sandboxMode ? 'sbtu01@payfast.co.za' : $this->arrayGet($postedData, 'your-email'),
+        'cell_number'   => $this->arrayGet($postedData, 'your-phone', '0820000000'),
         'm_payment_id'  => $payment_id,
-        'amount'        => cf7_array_get($postedData, 'donation-amount', 99),
+        'amount'        => $this->arrayGet($postedData, 'donation-amount', 99),
         'item_name'     => 'GHEX AFRICA - Donation towards Conference costs',
         'custom_int1'   => $order_id,
         'custom_str1'   => 'GHEX DONATION',
