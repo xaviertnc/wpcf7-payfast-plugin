@@ -17,7 +17,7 @@ class PayFast
 
   public  $hostname;
   public  $sandboxMode;
-  
+
   private $debug;
   private $logger;
   private $curlUserAgent;
@@ -100,7 +100,7 @@ class PayFast
 
     // Log stuff or not?
     $this->debug = $this->_array_get($options, 'debug', false);
- 
+
     // PF Server Hostname
     $this->hostname = $this->sandboxMode
       ? $this->_array_get($options, 'sandbox_hostname', 'sandbox.payfast.co.za')
@@ -149,7 +149,7 @@ class PayFast
 
   protected function log($message)
   {
-    if ($this->logger) {
+    if ($this->logger and $this->debug) {
       $this->logger->log($message);
     }
   }
@@ -298,7 +298,7 @@ class PayFast
   {
     $this->log('PayFast::validateItnRequestSignature(), passphrase = ' . $passphrase);
     $this->log('PayFast::validateItnRequestSignature(), itnPostedSignature = ' . $itnPostedSignature);
-     
+
      $itnSignature = $this->generateItnSignature($itnDataAsString, $passphrase);
      if ($itnSignature != $itnPostedSignature)
      {
