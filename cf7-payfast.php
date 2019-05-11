@@ -67,15 +67,15 @@ class CF7_Payfast_Plugin
   {
     // Warns if we don't have the Contact Form 7 plugin installed
     // or if the plugin version is too OLD!
-    add_action('admin_notices', array($this, 'adminNotice'));
+    add_action('admin_notices', array($this, 'renderDependenciesWarning'));
 
     // Handle external API calls
     add_action('admin_post_nopriv', array($this, 'apiHandlePayfastItnRequest'));
     add_action('admin_post', array($this, 'apiHandlePayfastItnRequest'));
 
     // Add a settings META BOX or TAB PANEL inside the Contact Form 7 admin area.
-    add_action('add_meta_boxes', array($this, 'addAdminMetaBoxes'));
-    add_action('wpcf7_editor_panels', array($this, 'addAdminTabPanels'));
+    add_action('add_meta_boxes', array($this, 'addSettingsMetaBoxes'));
+    add_action('wpcf7_editor_panels', array($this, 'addSettingsTabPanel'));
 
     add_action('wpcf7_after_create', array($this, 'afterCreateContactFrom'));
     add_action('wpcf7_after_save', array($this, 'afterSaveContactForm'));
@@ -100,9 +100,9 @@ class CF7_Payfast_Plugin
 
 
   /**
-   * Verify CF7 dependencies.
+   * Verify CF7 dependencies and render a WARNING notice if we find any issues.
    */
-  public function adminNotice()
+  public function renderDependenciesWarning()
   {
     // Verify that CF7 is active and updated to the required version (currently 3.9.0)
     if (is_plugin_active('contact-form-7/wp-contact-form-7.php'))
@@ -123,16 +123,16 @@ class CF7_Payfast_Plugin
       if ($wpcf7_version < 390)
       {
         echo '<div class="error"><p><strong>Warning: </strong>',
-          'Contact Form 7 - SOAP Forward requires that you have the latest version of ',
-          'Contact Form 7 installed. Please upgrade now.</p></div>';
+          'The Contact Form 7 PayFAST plugin extension requires that you have ',
+          'the latest version of Contact Form 7 installed. Please upgrade now.</p></div>';
       }
     }
     // If it's not installed and activated, throw an error
     else
     {
       echo '<div class="error"><p>Contact Form 7 is not activated. ',
-        'The Contact Form 7 Plugin must be installed and activated before ',
-        'you can use the PayFAST integration.</p></div>';
+        'The Contact Form 7 plugin must be installed and activated ',
+        'before you can use the CF7 PayFAST plugin extension.</p></div>';
     }
   }
 
@@ -141,20 +141,20 @@ class CF7_Payfast_Plugin
    * CF7 < 4.2
    * Adds a box to the main column on the form edit page.
    */
-  public function addAdminMetaBoxes()
+  public function addSettingsMetaBoxes()
   {
-    add_meta_box('cf7-payfast-settings', 'PayFAST', array($this, 'renderMetaBoxes'), '', 'form', 'low');
+    add_meta_box('cf7-payfast-settings', 'PayFAST', array($this, 'renderSettingsMetaBoxes'), '', 'form', 'low');
   }
 
 
   /**
    * CF7 >= 4.2
-   * Adds a tab to the editor on the form edit page.
+   * Adds a tab-panel to the editor on the form edit page.
    * @param array $panels [description]
    */
-  public function addAdminTabPanels($panels)
+  public function addSettingsTabPanel($panels)
   {
-    $panels['payfast-panel'] = array('title' => 'PayFAST', 'callback' => array($this, 'renderTabPanels'));
+    $panels['payfast-panel'] = array('title' => 'PayFAST', 'callback' => array($this, 'renderSettingsTabPanel'));
     return $panels;
   }
 
@@ -164,7 +164,7 @@ class CF7_Payfast_Plugin
    * @param  WP_Post $post A Wordpress POST object representing the current CF7 form.
    * @return string Meta boxes HTML
    */
-  public function renderMetaBoxes($post)
+  public function renderSettingsMetaBoxes($post)
   {
     // NOTE: Contact forms are saved as Wordpress posts, so "$post" actually
     // represents the saved CF7 form and $post->id === FORM ID
@@ -192,7 +192,7 @@ class CF7_Payfast_Plugin
    * @param  WP_Post $post A Wordpress POST object representing the current CF7 form.
    * @return string Meta boxes HTML
    */
-  public function renderTabPanels( $post )
+  public function renderSettingsTabPanel( $post )
   {
     wp_nonce_field('cf7_payfast_metaboxes', 'cf7_payfast_metaboxes_nonce');
     $cf7_payfast = get_post_meta($post->id(), '_cf7_payfast_key', true);
@@ -235,7 +235,7 @@ class CF7_Payfast_Plugin
 
 
   /**
-   * Save CF7 PayFast integration settings.
+   * Save PayFast integration settings after saving the contact form settings.
    * @param  CF7_Form $contact_form CF7 form object?
    * @return NULL
    */
