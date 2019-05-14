@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Contact Form 7 - PayFAST integration
  * Description: A Contact Form 7 extension that redirects to PayFAST on submit.
- * Version: 1.0.1
+ * Version: 1.0.0
  * Author: C. Moller
  * Author URI: http://www.webchamp.co.za
  * License: GPLv3
@@ -19,23 +19,9 @@ include_once 'PayFast.php';
 
 
 
-// ----------------
-// Plugin constants
-// ----------------
-
-if ( ! defined('__PAYFAST_MODE__'))
+function wpcf7_payfast_uninstall()
 {
-  define('__PAYFAST_MODE__', 'SANDBOX'); // or LIVE or SANDBOX
-}
-
-if ( ! defined('CF7_PAYFAST_URL'))
-{
-  define('CF7_PAYFAST_URL', plugin_dir_url( __FILE__ ));
-}
-
-if ( ! defined('CF7_PAYFAST_PATH'))
-{
-  define('CF7_PAYFAST_PATH', plugin_dir_path( __FILE__ ));
+  delete_option('cf7payfast_options');
 }
 
 
@@ -57,6 +43,10 @@ if ( ! defined('CF7_PAYFAST_PATH'))
  */
 class CF7_Payfast_Plugin
 {
+
+  private $submissions = array();
+
+
   /**
    * CF7_Payfast_Plugin constructor.
    *
@@ -64,21 +54,36 @@ class CF7_Payfast_Plugin
    */
   public function __construct()
   {
-    // Warns if we don't have the Contact Form 7 plugin installed
-    // or if the plugin version is too OLD!
-    add_action('admin_notices', array($this, 'renderDependenciesWarning'));
+    if ( ! session_id())
+    {
+      session_start();
+    }
 
-    // Handle external API calls
-    add_action('admin_post_nopriv', array($this, 'apiHandlePayfastItnRequest'));
-    add_action('admin_post', array($this, 'apiHandlePayfastItnRequest'));
+    //  plugin functions
+    register_activation_hook(__FILE__, array($this, 'activatePlugin'));
+    register_deactivation_hook( __FILE__, array($this, 'deactivatePlugin'));
+    register_uninstall_hook(__FILE__, 'wpcf7_payfast_uninstall');
 
-    // Add a settings META BOX or TAB PANEL inside the Contact Form 7 admin area.
+    add_action('wpcf7_init', array($this, 'addCustomTags'));
+
+    // Generate Admin From Tag
+    add_action('wpcf7_admin_init', array($this, 'addTagGeneratorPopup'), 50);
+
+    // Add a settings META BOX or TAB PANEL inside the CF7 admin area.
     add_action('add_meta_boxes', array($this, 'addSettingsMetaBoxes'));
     add_action('wpcf7_editor_panels', array($this, 'addSettingsTabPanel'));
 
-    add_action('wpcf7_after_create', array($this, 'afterContactFromCreate'));
     add_action('wpcf7_after_save', array($this, 'afterContactFormSave'));
-    add_action('wpcf7_mail_sent', array($this, 'afterContactFormMailSent'));
+    add_action('wpcf7_after_create', array($this, 'afterContactFromCreate'));
+    add_action('wpcf7_before_send_mail', array($this, 'beforeSendMail'));
+
+    // Handle external API calls
+    add_action('admin_post', array($this, 'apiHandlePayfastItnRequest'));
+    add_action('admin_post_nopriv', array($this, 'apiHandlePayfastItnRequest'));
+
+    // Warns if we don't have the Contact Form 7 plugin installed
+    // or if the plugin version is too OLD!
+    add_action('admin_notices', array($this, 'renderAdminNotices'));
 
     // Disable Contact Form 7 JavaScript completely
     add_filter('wpcf7_load_js', '__return_false');
@@ -87,21 +92,151 @@ class CF7_Payfast_Plugin
 
   /**
    * Safely gets a value from an array, given a potentially non-existing KEY value.
-   * @param  array  $array   [description]
-   * @param  string $key     [description]
-   * @param  mixed  $default [description]
-   * @return mixed           [description]
+   * @param  array  $array
+   * @param  string $key
+   * @param  mixed  $default Alterante value if the array value is FALSY
+   * @return mixed           Array value with key OR default
    */
   private function arrayGet(array $array, $key, $default = null)
   {
-    return isset($array[$key]) ? $array[$key] : $default;
+    return empty($array[$key]) ? $default : $array[$key];
+  }
+
+
+  public function uniqid($length = 13)
+  {
+    // uniqid gives 13 chars, but you could adjust it to your needs.
+    if (function_exists("random_bytes")) {
+      $bytes = random_bytes(ceil($length / 2));
+      return substr(bin2hex($bytes), 0, $length);
+    }
+    if (function_exists("openssl_random_pseudo_bytes")) {
+      $bytes = openssl_random_pseudo_bytes(ceil($length / 2));
+      return substr(bin2hex($bytes), 0, $length);
+    }
+    return uniqid();
+  }
+
+
+  /**
+   * Start session if not already started
+   */
+  public function changeSession($newSessionID, $log)
+  {
+    $oldSessionID = session_id();
+    $log->changeSession('Current Session ID = ' . $oldSessionID);
+    $log->changeSession('Current $_SESSION = ' . (isset($_SESSION) ? print_r($_SESSION, true) : 'none'));
+    $log->changeSession('New Session ID = ' . $newSessionID);
+    if ( ! $oldSessionID)
+    {
+      session_id($newSessionID);
+      session_start();
+    }
+    elseif ($newSessionID != $oldSessionID)
+    {
+      $log->changeSession('WRITE and CLOSE the current session.');
+      session_write_close();
+      session_id($newSessionID);
+      session_start();
+    }
+    $log->changeSession('New $_SESSION = ' . print_r($_SESSION, true));
+    return $oldSessionID;
+  }
+
+
+  public function storePostedData($submissionID, array $postedData, $log)
+  {
+    $log->storePostedData('STORE POSTED-DATA submissionID = ' . $submissionID);
+    if ( ! $submissionID) { return; }
+    $oldSessionID = $this->changeSession($submissionID, $log);
+    $_SESSION = array_merge($_SESSION, $postedData);
+    if ($oldSessionID and $oldSessionID != $submissionID)
+    {
+      $this->changeSession($oldSessionID, $log);
+    }
+  }
+
+
+  public function getPostedData($submissionID = null, $log)
+  {
+    $log->getPostedData('GET POSTED-DATA submissionID = ' . $submissionID);
+    if ( ! $submissionID) { return; }
+    $oldSessionID = $this->changeSession($submissionID, $log);
+    $postedData = array_merge(array(), $_SESSION);
+    if ($oldSessionID and $oldSessionID != $submissionID)
+    {
+      $log->getPostedData('DESTROY the NEW SESSION and change back to the PREV SESSION!');
+      session_destroy();
+      $_SESSION = [];
+      $this->changeSession($oldSessionID, $log);
+    }
+    return $postedData;
+  }
+
+
+  public function saveFormPost(array $postedData, $log)
+  {
+    $log->saveFormPost('SAVE FORM POST = ' . print_r($postedData, true));
+    $cf7payfast_options = get_option('cf7payfast_options');
+    $posts = json_decode($this->arrayGet($cf7payfast_options, 'form_posts', '[]'));
+    $log->saveFormPost('options = ' . print_r($cf7payfast_options, true));
+    $log->saveFormPost('posts = ' . print_r($posts, true));
+    $id = $this->arrayGet($cf7payfast_options, 'next_pmt_id');
+    $postedData['id'] = $id;
+    $postedData['form'] = $this->arrayGet($postedData, '_wpcf7_unit_tag');
+    $postedData['method'] = $this->arrayGet($postedData, 'method', ['None'])[0];
+    $postedData['time'] = date('Y-m-d H:i:s');
+    // Remove CF7 META Data
+    unset($postedData['g-recaptcha-response']);
+    unset($postedData['checkout-submit']);
+    unset($postedData['_wpcf7_container_post']);
+    unset($postedData['_wpcf7_unit_tag']);
+    unset($postedData['_wpcf7_version']);
+    unset($postedData['_wpcf7_locale']);
+    unset($postedData['_wpcf7']);
+    // Add POST
+    $posts[] = $postedData;
+    // JSON encode save POSTS
+    $jsonFormPosts = json_encode($posts);
+    $log->saveFormPost('jsonFormPosts = ' . print_r($jsonFormPosts, true));
+    $cf7payfast_options['next_pmt_id'] = $id + 1;
+    $cf7payfast_options['form_posts'] = $jsonFormPosts;
+    update_option('cf7payfast_options', $cf7payfast_options);
+    return $jsonFormPosts;
+  }
+
+
+  public function activatePlugin()
+  {
+    // default options
+    $cf7payfast_options = array(
+      'mode'              => 'SANDBOX',
+      'return_url'        => esc_url(get_site_url(null, 'payment-successful')),
+      'cancel_url'        => esc_url(get_site_url(null, 'payment-canceled')),
+      'merchant_id_live'  => '',
+      'merchant_key_live' => '',
+      'passphrase_live'   => '',
+      'merchant_id_test'  => '10005824',
+      'merchant_key_test' => 'l9p20jqbzs762',
+      'passphrase_test'   => '',
+      'form_posts'        => '[]',
+      'next_pmt_id'       => 1
+    );
+
+    add_option('cf7payfast_options', $cf7payfast_options);
+  }
+
+
+  public function deactivatePlugin()
+  {
+    unset($_SESSION['_cf7_payfast_submissions']);
   }
 
 
   /**
    * Verify CF7 dependencies and render a WARNING notice if we find any issues.
    */
-  public function renderDependenciesWarning()
+  public function renderAdminNotices()
   {
     // Verify that CF7 is active and updated to the required version (currently 3.9.0)
     if (is_plugin_active('contact-form-7/wp-contact-form-7.php'))
@@ -213,6 +348,118 @@ class CF7_Payfast_Plugin
   }
 
 
+  public function addTagGeneratorPopup()
+  {
+    $tag_generator = WPCF7_TagGenerator::get_instance();
+    $tag_generator->add('checkout', 'checkout', array($this, 'renderTagGeneratorPopup'));
+  }
+
+
+  // Display form in admin
+  public function renderTagGeneratorPopup($contact_form, $args = '')
+  {
+    // Parse data and get our options
+    $args = wp_parse_args( $args, array() );
+    $type = 'payfast';
+    ?>
+
+    <div class="control-box">
+      <fieldset>
+        <legend>Generate a form-tag for a checkout submit button.</legend>
+        <table class="form-table">
+          <tbody>
+            <tr>
+              <th scope="row"><?php echo esc_html(__('Field type', 'contact-form-7')); ?></th>
+              <td>
+                <fieldset>
+                <legend class="screen-reader-text"><?php echo esc_html(__( 'Field type', 'contact-form-7' )); ?></legend>
+                <select name="tagtype">
+                  <option value="paypal">PayPal</option>
+                  <option value="payfast" selected>PayFAST</option>
+                </select>
+                </fieldset>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row"><label for="<?php echo esc_attr( $args['content'] . '-values' ); ?>"><?php echo esc_html( __( 'Label', 'contact-form-7' ) ); ?></label></th>
+              <td><input type="text" name="values" class="oneline" id="<?php echo esc_attr( $args['content'] . '-values' ); ?>" value="Donate Now!" /></td>
+            </tr>
+            <tr>
+              <th scope="row"><label for="<?php echo esc_attr($args['content'] . '-id' ); ?>"><?php echo esc_html(__('Id attribute', 'contact-form-7')); ?></label></th>
+              <td><input type="text" name="id" class="idvalue oneline option" id="<?php echo esc_attr($args['content'] . '-id'); ?>" /></td>
+            </tr>
+            <tr>
+              <th scope="row"><label for="<?php echo esc_attr($args['content'] . '-class' ); ?>"><?php echo esc_html(__('Class attribute', 'contact-form-7')); ?></label></th>
+              <td><input type="text" name="class" class="classvalue oneline option" id="<?php echo esc_attr($args['content'] . '-class'); ?>" /></td>
+            </tr>
+          </tbody>
+        </table>
+      </fieldset>
+    </div>
+
+    <div class="insert-box">
+      <input type="text" name="<?php echo $type; ?>" class="tag code" readonly="readonly" onfocus="this.select()" />
+      <div class="submitbox">
+        <input type="button" class="button button-primary insert-tag" value="<?php echo esc_attr(__('Insert Tag', 'contact-form-7')); ?>" />
+      </div>
+      <br class="clear" />
+    </div>
+
+    <?php
+  }
+
+
+  /**
+   * addCustomTags
+   */
+  public function addCustomTags()
+  {
+    // $log = new OneFile\Logger(__DIR__);
+    // $log->setFilename('debug_' . $log->getDate() .  '.log');
+    // $log->add_custom_tag('CUSTOM TAG: checkout');
+
+    wpcf7_add_form_tag(
+      array('payfast', 'paypal'),
+      array($this, 'renderFormTag'),
+      array('name-attr' => true)
+    );
+
+  }
+
+
+  /**
+   * renderFormTag
+   * @param  WPCF7_FormTag $tag [description]
+   * @return string TAG HTML
+   */
+  public function renderFormTag($tag)
+  {
+    $tag = new WPCF7_FormTag($tag);
+
+    // $log = new OneFile\Logger(__DIR__);
+    // $log->setFilename('debug_' . $log->getDate() .  '.log');
+    // $log->render_custom_tag('Tag: ' . print_r($tag, true));
+
+    // if (empty($tag->name)) { return ''; }
+
+    $class = wpcf7_form_controls_class($tag->type);
+
+    $value = isset($tag->values[0]) ? $tag->values[0] : '';
+    if (empty($value)) { $value = __('Send', 'contact-form-7'); }
+
+    $atts = array();
+    $atts['type'] = 'submit';
+    $atts['name'] = 'checkout-submit';
+    $atts['class'] = $tag->get_class_option($class);
+    $atts['tabindex'] = $tag->get_option('tabindex', 'signed_int', true);
+    $atts['value'] = $tag->type;
+
+    $atts = wpcf7_format_atts($atts);
+
+    return "<button $atts>" . esc_html($value) . '</button>';
+  }
+
+
   /**
    * Copy Redirect page key and assign it to duplicate form
    * @param  [type] $contact_form [description]
@@ -257,83 +504,116 @@ class CF7_Payfast_Plugin
 
 
   /**
-   * Redirect the user, after a successful email is sent
+   * Redirect the user, after a successful form submit.
    * @param  [type] $contact_form [description]
    * @return [type]               [description]
    */
-  public function afterContactFormMailSent($contact_form)
+  public function beforeSendMail($contact_form)
   {
-    $app = new stdClass();
-    $payFastConfig = new stdClass();
-
-    $payFastConfig->mode = __PAYFAST_MODE__;
-
-    if ($payFastConfig->mode == 'LIVE') {
-      $payFastConfig->merchantId  = '11266578';
-      $payFastConfig->merchantKey = 'tiz0cq88aqc0a';
-      $payFastConfig->passphrase  = 'Doen jou eie ding';
-    }
-
-    else { // SANDBOX
-      $payFastConfig->merchantId  = '10005824';
-      $payFastConfig->merchantKey = 'l9p20jqbzs762';
-      $payFastConfig->passphrase  = '';
-    }
-
     $log = new OneFile\Logger(__DIR__);
     $log->setFilename('debug_' . $log->getDate() .  '.log');
-    $submission = WPCF7_Submission::get_instance() ?: array();
-    $postedData = $submission->get_posted_data();
-    $log->debug('CF7-STATUS: ' . $submission->get_status());
-    $log->debug('CF7-POSTED-DATA: ' . print_r($postedData, true));
 
-    $isCard = true;
-    $payment_id = 100;
-    $order_id = 101;
+    $submission = WPCF7_Submission::get_instance();
+    if ( ! $submission) { return; }
+
+    $postedData = $submission->get_posted_data();
+    $log->before_mail('CF7-STATUS: ' . $submission->get_status());
+    $log->before_mail('CF7-POSTED-DATA: ' . print_r($postedData, true));
+
+    // NB: VERY IMPORTANT TEST!
+    if ( ! isset($postedData['checkout-submit'])) {
+      $log->before_mail('Submission is NOT a PayFAST form submit... IGNORE!');
+      return;
+    }
 
     try
     {
+
+      $app = new stdClass();
+      $payFastConfig = new stdClass();
+
+      $submissionID = 'cf7-pf-' . $this->uniqid();
+
+      $cf7payfast_options = get_option('cf7payfast_options');
+
+      if (empty($cf7payfast_options))
+      {
+        throw new Exception('`cf7payfast_options` cannot be empty... logic error? Check code!');
+      }
+
+      $payment_id = $this->arrayGet($cf7payfast_options, 'next_pmt_id');
+
       // SETUP PAYFAST SERVICE
-      $payfast = new OneFile\PayFast($payFastConfig->mode, ['logger' => $log, 'debug' => true]);
+      $payfast = new OneFile\PayFast(
+        $this->arrayGet($cf7payfast_options, 'mode'),
+        ['logger' => $log, 'debug' => true]
+      );
+
+      if ($payfast->sandboxMode)
+      {
+        $payFastConfig->merchantId  = $cf7payfast_options['merchant_id_test'];
+        $payFastConfig->merchantKey = $cf7payfast_options['merchant_key_test'];
+        $payFastConfig->passphrase  = $cf7payfast_options['passphrase_test'];
+      }
+      else
+      {
+        $payFastConfig->merchantId  = $cf7payfast_options['merchant_id_live'];
+        $payFastConfig->merchantKey = $cf7payfast_options['merchant_key_live'];
+        $payFastConfig->passphrase  = $cf7payfast_options['passphrase_live'];
+      }
+
+      $payMethod = $this->arrayGet($postedData, 'method', ['none'])[0];
+      $payFastConfig->isCard = ($payMethod != 'EFT');
+
       $itnData = [
         'merchant_id'   => $payFastConfig->merchantId,
         'merchant_key'  => $payFastConfig->merchantKey,
-        'return_url'    => get_site_url(null, 'cf7-payfast-success'),
-        'cancel_url'    => get_site_url(null, 'cf7-payfast-cancel'),
+        'return_url'    => $cf7payfast_options['return_url'],
+        'cancel_url'    => $cf7payfast_options['cancel_url'],
         'notify_url'    => esc_url(admin_url('admin-post.php')),
         'name_first'    => $payfast->sandboxMode ? 'Test' : $this->arrayGet($postedData, 'your-name', 'noname'),
-        'name_last'     => $payfast->sandboxMode ? 'User' : $this->arrayGet($postedData, 'your-lastname'),
+        'name_last'     => $payfast->sandboxMode ? 'User' : $this->arrayGet($postedData, 'your-lastname', 'none'),
         'email_address' => $payfast->sandboxMode ? 'sbtu01@payfast.co.za' : $this->arrayGet($postedData, 'your-email'),
         'cell_number'   => $this->arrayGet($postedData, 'your-phone', '0820000000'),
         'm_payment_id'  => $payment_id,
-        'amount'        => $this->arrayGet($postedData, 'donation-amount', 99),
+        'amount'        => $this->arrayGet($postedData, 'donation-amount', 999),
         'item_name'     => 'GHEX AFRICA - Donation towards Conference costs',
-        'custom_int1'   => $order_id,
-        'custom_str1'   => 'GHEX DONATION',
-        'payment_method'=> $isCard ? 'cc' : 'eft'  // eft,cc,dd,bc,mp,mc,cd
+        'custom_int1'   => $contact_form->id(),
+        'custom_str1'   => $submissionID,
+        'payment_method'=> $payFastConfig->isCard ? 'cc' : 'eft'  // eft,cc,dd,bc,mp,mc,cd
       ];
 
       $itnDataAsString = $payfast->stringifyItnData($itnData, 'removeEmptyItems');
       $itnSignature = $payfast->generateItnSignature($itnDataAsString, $payFastConfig->passphrase);
 
-      // REDIRECT TO PAYFAST.COM
-      $goto = 'https://' . $payfast->hostname . $payfast->itnProcessUri .
+      $payFastUrl = 'https://' . $payfast->hostname . $payfast->itnProcessUri .
         '?' . $itnDataAsString . '&signature=' . $itnSignature;
 
-      $log->cf7_submit_ok('goto = ' . $goto);
+      $log->before_mail('Payfast URL = ' . $payFastUrl);
 
-      if (wp_redirect($goto))
-      {
-        exit;
-      }
+      $ip = $submission->get_meta('remote_ip');
+      if ( ! $ip) { $ip = 'noip'; }
+      $postedData['ip'] = $ip;
 
+      $this->storePostedData($submissionID, $postedData, $log);
+
+      // NOTE: Must be AFTER submission type check!
+      add_filter('wpcf7_skip_mail',  '__return_true');
+
+      // Defer redirecting untill AFTER the submission process is completely done.
+      // NOTE: We purposley set a LOW priority on this action callback so other
+      // plugins with the same action can run first.
+      add_action('wpcf7_mail_sent', function() use($payFastUrl, $log) {
+        $log->wpcf7_mail_sent('Redirecting to: ' . $payFastUrl);
+        if (wp_redirect($payFastUrl)) { exit; }
+      }, 100);
     }
+
+    // WHOOPS!
     catch (\Exception $ex)
     {
-      echo $ex->getMessage();
-      echo '<pre>Status: ', print_r($submission->get_status(), true), '</pre>';
-      echo '<pre>Post Data: ', print_r($submission->get_posted_data(), true), '</pre>';
-      exit;
+      $log->error($ex->getMessage());
+      return false;
     }
   }
 
@@ -344,11 +624,79 @@ class CF7_Payfast_Plugin
   public function apiHandlePayfastItnRequest()
   {
     $log = new OneFile\Logger(__DIR__);
-    $log->setFilename('itn_' . $log->getDate() .  '.log');
-    $log->itn_post('ITN POST: ' . print_r($_REQUEST, true));
-    $payfast = new OneFile\PayFast(__PAYFAST_MODE__, ['logger' => $log, 'debug' => true]);
-    $payfast->aknowledgeItnRequest();
-    exit;
+    $log->setFilename('itn_' . $log->getDate() .  '_log.php');
+    $log->itn_post('apiHandlePayfastItnRequest(), $_REQUEST:' . print_r($_REQUEST, true));
+
+    try {
+
+      // TODO: Check that the CF7 plugin is present and active!
+
+      $cf7payfast_options = get_option('cf7payfast_options');
+
+      if (empty($cf7payfast_options))
+      {
+        throw new Exception('`cf7payfast_options` cannot be empty... ' .
+          'logic error? Check code!');
+      }
+
+      // SETUP PAYFAST SERVICE
+      $payfast = new OneFile\PayFast(
+        $this->arrayGet($cf7payfast_options, 'mode'),
+        ['logger' => $log, 'debug' => true]
+      );
+
+      $payfast->aknowledgeItnRequest();
+
+      $contact_form_id = $this->arrayGet($_REQUEST, 'custom_int1');
+      $log->after_itn('contact_form_id: ' . $contact_form_id);
+
+      $submissionID = $this->arrayGet($_REQUEST, 'custom_str1');
+      $log->after_itn('submissionID: ' . $submissionID);
+
+      if ( ! $contact_form_id) { return; }
+
+      $_POST = $this->getPostedData($submissionID, $log);
+
+      $_POST['pf_id'] = $_REQUEST['pf_payment_id'];
+      $_POST['fee'] = $_REQUEST['amount_fee'];
+      $_POST['net'] = $_REQUEST['amount_net'];
+
+      // IMPORTANT: Clear `checkout-submit` to prevent recursively
+      //            calling the `wpcf7_before_send_mail` action!
+      unset($_POST['checkout-submit']);
+
+      $log->after_itn('$_POST: ' . print_r($_POST, true));
+
+      // Check if PAYFAST PAYMENT was SUCCESS or FAIL!
+      if ($this->arrayGet($_REQUEST, 'payment_status') == 'COMPLETE')
+      {
+        $contact_form = WPCF7_ContactForm::get_instance($contact_form_id);
+
+        // [m_payment_id] => 2
+        // [pf_payment_id] => 812470
+        // [payment_status] => COMPLETE
+        // [item_name] => GHEX AFRICA - Donation towards Conference costs
+        // [item_description] =>
+        // [amount_gross] => 699.00
+        // [amount_fee] => -16.08
+        // [amount_net] => 682.92
+
+        // NOTE: WPCF7_Submission::get_instance() behaves differently depending
+        //       on wheter we provide a CONTACT_FORM arg or not.
+        //       With a valid CONTACT FORM arg, it AUTO gets and validates
+        //       any $_POST data and AUTO sends all configured emails!
+        //       No need to call WPCF7_Submission::submit() or mail().
+        $submission = WPCF7_Submission::get_instance($contact_form);
+
+        $this->saveFormPost($_POST, $log);
+      }
+    }
+
+    catch(Exception $e)
+    {
+      $log->itn_post($e->getMessage());
+    }
+
   }
 
 
