@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Contact Form 7 - PayFAST integration
  * Description: A Contact Form 7 extension that redirects to PayFAST on submit.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: C. Moller
  * Author URI: http://www.webchamp.co.za
  * License: GPLv3
@@ -79,6 +79,25 @@ class CF7_Payfast_Plugin
 
     // Disable Contact Form 7 JavaScript completely
     add_filter('wpcf7_load_js', '__return_false');
+  }
+
+
+  public function getDefaultSettings()
+  {
+    return array(
+        'mode'              => 'SANDBOX',
+        'product'           => '',
+        'return_page_id'    => 0,
+        'return_url'        => esc_url(get_site_url(null, 'payment-successful')),
+        'cancel_page_id'    => 0,
+        'cancel_url'        => esc_url(get_site_url(null, 'payment-canceled')),
+        'merchant_id_live'  => '',
+        'merchant_key_live' => '',
+        'passphrase_live'   => '',
+        'merchant_id_test'  => '10005824',
+        'merchant_key_test' => 'l9p20jqbzs762',
+        'passphrase_test'   => ''
+      );
   }
 
 
@@ -177,7 +196,7 @@ class CF7_Payfast_Plugin
       'method'       => $this->arrayGet($payment, 'method'),
       'amount'       => $this->arrayGet($payment, 'amount'),
       'cf7_form_ref' => $this->arrayGet($payment, '_wpcf7_unit_tag'),
-      'remote_id'    => $this->arrayGet($payment, 'remote_ip'),
+      'remote_ip'    => $this->arrayGet($payment, 'remote_ip'),
       'firstname'    => $this->arrayGet($payment, 'firstname'),
       'lastname'     => $this->arrayGet($payment, 'lastname'),
       'email'        => $this->arrayGet($payment, 'email'),
@@ -185,13 +204,25 @@ class CF7_Payfast_Plugin
       'message'      => $this->arrayGet($payment, 'message'),
     );
 
-    $data['fullname'] = $this->arrayGet($data, 'firstname');
-    if ( ! empty($data['lastname']))
+    $firstname = $this->arrayGet($data, 'firstname');
+
+    if (strpos($firstname, ' ') !== FALSE)
     {
-      $data['fullname'] = trim($data['firstname'] . ' ' . data['lastname']);
+      $nameParts = explode(' ', $firstname);
+      $data['firstname'] = $nameParts[0];
+      $data['lastname']  = $nameParts[1];  // NB: Overrides user input!
+      $data['fullname']  = $firstname;
+    }
+    elseif ( ! empty($data['lastname']))
+    {
+      $data['fullname'] = $firstname . ' ' . data['lastname'];
+    }
+    else
+    {
+      $data['fullname'] = $firstname;
     }
 
-    $wpdb->insert($tablename, $data);
+    $wpdb->insert($tableName, $data);
 
     return $wpdb->insert_id; // i.e. payment_id
   }
@@ -210,7 +241,7 @@ class CF7_Payfast_Plugin
       'amount_net'   => $this->arrayGet($payment, 'amount_net'),
       'confirmed_at' => current_time('mysql')
     );
-    return $wpdb->update($tablename, $paymentID, $data);
+    return $wpdb->update($tableName, $data, array('id' => $paymentID));
   }
 
 
@@ -220,7 +251,7 @@ class CF7_Payfast_Plugin
     $log->wpdbDeletePayment('PAYMENT = ' . print_r($payment, true));
     $tableName = $wpdb->prefix . 'payments_cf7';
     $paymentID = $this->arrayGet($payment, 'id', 0);
-    return $wpdb->delete($tablename, $paymentID);
+    return $wpdb->delete($tableName, array('id' => $paymentID));
   }
 
 
@@ -233,22 +264,22 @@ class CF7_Payfast_Plugin
     $charsetCollate = $wpdb->get_charset_collate();
 
     $sql = "CREATE TABLE $tableName (
-      id int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-      status varchar(16) NULL,
+      id int(11) NOT NULL AUTO_INCREMENT,
+      status varchar(16) NOT NULL,
       method varchar(32) NOT NULL,
-      amount decimal(10,2) NOT NULL,
       cf7_form_ref varchar(65) NULL,
-      payfast_ref int(11) NOT NULL,
-      payfast_fee decimal(10,2) NOT NULL,
-      amount_net decimal(10,2) NOT NULL,
-      remote_ip varchar(32) NULL,
+      amount decimal(10,2) NOT NULL,
+      payfast_ref int(11) NULL,
       fullname varchar(64) NULL,
       firstname varchar(32) NULL,
       lastname varchar(32) NULL,
       email varchar(255) NULL,
       phone varchar(16) NULL,
       message text NULL,
-      confirmed_at datetime DEFAULT '0000-00-00 00:00:00' NOT NULL,
+      payfast_fee decimal(10,2) NULL,
+      amount_net decimal(10,2) NULL,
+      remote_ip varchar(32) NULL,
+      confirmed_at datetime NULL,
       created_at timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
       PRIMARY KEY  (id)
     ) $charsetCollate;";
@@ -340,22 +371,42 @@ class CF7_Payfast_Plugin
   {
     // NOTE: Contact forms are saved as Wordpress posts, so "$post" actually
     // represents the saved CF7 form and $post->id === FORM ID
-    wp_nonce_field('cf7_payfast_metaboxes', 'cf7_payfast_metaboxes_nonce');
-    $cf7_payfast = get_post_meta($post->id(), '_cf7_payfast_key', true);
+    $formPayfastSettings = get_post_meta($post->id(), '_cf7_payfast_settings', true);
+
+    if ( ! $formPayfastSettings)
+    {
+      $formPayfastSettings = $this->getDefaultSettings();
+      update_post_meta($post->id(), '_cf7_payfast_settings', $formPayfastSettings);
+    }
 
     // The meta box content
-    $dropdown_options = array (
-      'echo' => 0,
-      'name' => 'cf7-payfast-success-page-id',
+    $returnPageDropdownOptions = array (
+      'echo' => false,
+      'name' => 'cf7_payfast_return_page_id',
       'show_option_none' => '--',
       'option_none_value' => '0',
-      'selected' => $cf7_payfast
-    );
+      'selected' => $this->arrayGet($formPayfastSettings, 'return_page_id', '0')
+    );?>
 
-    echo '<fieldset>
-            <legend>Select a page to redirect to after a successful payment.</legend>' .
-            wp_dropdown_pages($dropdown_options) .
-         '</fieldset>';
+  <fieldset>
+      <legend>PayFAST Settings</legend>
+      <p class="description">
+        <label>
+          Select the PAGE PayFAST should redirect to after a completed payment.
+          <br>
+          <?=wp_dropdown_pages($returnPageDropdownOptions)?>
+        </label>
+      </p>
+      <p class="description">
+        <label>
+          PayFAST Product Description
+          <br>
+          <input type="text" name="cf7_payfast_product" style="width:100%"
+            value="<?= $this->arrayGet($formPayfastSettings, 'product') ?>"/>
+        </label>
+      </p>
+  </fieldset><?php
+
   }
 
 
@@ -366,23 +417,161 @@ class CF7_Payfast_Plugin
    */
   public function renderSettingsTabPanel( $post )
   {
-    wp_nonce_field('cf7_payfast_metaboxes', 'cf7_payfast_metaboxes_nonce');
-    $cf7_payfast = get_post_meta($post->id(), '_cf7_payfast_key', true);
+    // NOTE: Contact forms are saved as Wordpress posts, so "$post" actually
+    // represents the saved CF7 form and $post->id === FORM ID
+    $formPayfastSettings = get_post_meta($post->id(), '_cf7_payfast_settings', true);
 
-    // The meta box content
-    $dropdown_options = array (
-      'echo' => 0,
-      'name' => 'cf7-payfast-success-page-id',
+    if ( ! $formPayfastSettings)
+    {
+      $formPayfastSettings = $this->getDefaultSettings();
+      update_post_meta($post->id(), '_cf7_payfast_settings', $formPayfastSettings);
+    }
+
+    $returnPageDropdownOptions = array (
+      'echo' => false, // Don't echo html to page!
+      'name' => 'cf7_payfast_return_page_id',
       'show_option_none' => '--',
       'option_none_value' => '0',
-      'selected' => $cf7_payfast
+      'selected' => $this->arrayGet($formPayfastSettings, 'return_page_id')
     );
 
-    echo '<h3>Pay Success Settings</h3>
-          <fieldset>
-            <legend>Select a page to redirect to after a successful payment.</legend>' .
-            wp_dropdown_pages($dropdown_options) .
-         '</fieldset>';
+    $cancelPageDropdownOptions = array (
+      'echo' => false, // Don't echo html to page!
+      'name' => 'cf7_payfast_cancel_page_id',
+      'show_option_none' => '--',
+      'option_none_value' => '0',
+      'selected' => $this->arrayGet($formPayfastSettings, 'cancel_page_id')
+    );
+
+    $isLive = ($this->arrayGet($formPayfastSettings, 'mode') == 'LIVE'); ?>
+
+<!--    'merchant_id_live'  => '',
+        'merchant_key_live' => '',
+        'passphrase_live'   => '',
+        'merchant_id_test'  => '10005824',
+        'merchant_key_test' => 'l9p20jqbzs762',
+        'passphrase_test'   => '' -->
+
+  <style>
+      #payfast-panel select,
+      #payfast-panel input,
+      #payfast-panel textarea { width: 100%; }
+  </style>
+  <h3>PayFAST Settings</h3>
+  <fieldset>
+      <p class="description">
+        <label>
+          PayFAST Mode
+          <br>
+          <select name="cf7_payfast_mode">
+            <option value="SANDBOX"<?= $isLive?'':' selected="selected"'?>>TEST</option>
+            <option value="LIVE"<?= $isLive?' selected="selected"':''?>>LIVE</option>
+          </select>
+        </label>
+      </p>
+      <br>
+      <hr>
+      <br>
+      <p class="description">
+        <label>
+          PayFAST Product Description
+          <br>
+          <input type="text" name="cf7_payfast_product"
+            value="<?= $this->arrayGet($formPayfastSettings, 'product') ?>"/>
+        </label>
+      </p>
+      <br>
+      <hr>
+      <br>
+      <p class="description">
+        <label>
+          Merchant ID (Test)
+          <br>
+          <input type="text" name="cf7_payfast_merchant_id_test"
+            value="<?= $this->arrayGet($formPayfastSettings, 'merchant_id_test') ?>"/>
+        </label>
+      </p>
+      <p class="description">
+        <label>
+          Merchant Key (Test)
+          <br>
+          <input type="text" name="cf7_payfast_merchant_key_test"
+            value="<?= $this->arrayGet($formPayfastSettings, 'merchant_key_test') ?>"/>
+        </label>
+      </p>
+      <p class="description">
+        <label>
+          Passphrase (Test)
+          <br>
+          <input type="text" name="cf7_payfast_passphrase_test"
+            value="<?= $this->arrayGet($formPayfastSettings, 'passphrase_test') ?>"/>
+        </label>
+      </p>
+      <br>
+      <hr>
+      <br>
+      <p class="description">
+        <label>
+          Merchant ID (Live)
+          <br>
+          <input type="text" name="cf7_payfast_merchant_id_live"
+            value="<?= $this->arrayGet($formPayfastSettings, 'merchant_id_live') ?>"/>
+        </label>
+      </p>
+      <p class="description">
+        <label>
+          Merchant Key (Live)
+          <br>
+          <input type="text" name="cf7_payfast_merchant_key_live"
+            value="<?= $this->arrayGet($formPayfastSettings, 'merchant_key_live') ?>"/>
+        </label>
+      </p>
+      <p class="description">
+        <label>
+          Passphrase (Live)
+          <br>
+          <input type="password" name="cf7_payfast_passphrase_live"
+            value="<?= $this->arrayGet($formPayfastSettings, 'passphrase_live') ?>"/>
+        </label>
+      </p>
+      <br>
+      <hr>
+      <br>
+      <p class="description">
+        <label>
+          Select the PAGE PayFAST should redirect to after a completed payment.
+          <br>
+          <?=wp_dropdown_pages($returnPageDropdownOptions)?>
+        </label>
+      </p>
+      <p class="description">
+        <label>
+          -- OR -- Specify a custom URL (Overrides the COMPLETED PAGE setting)
+          <br>
+          <input type="text" name="cf7_payfast_return_url"
+            value="<?= $this->arrayGet($formPayfastSettings, 'return_url') ?>"/>
+        </label>
+      </p>
+      <br>
+      <hr>
+      <br>
+      <p class="description">
+        <label>
+          Select the PAGE PayFAST should redirect to after a cancelled payment.
+          <br>
+          <?=wp_dropdown_pages($cancelPageDropdownOptions)?>
+        </label>
+      </p>
+      <p class="description">
+        <label>
+          -- OR -- Specify a custom URL (Overrides the CANCEL PAGE setting)
+          <br>
+          <input type="text" name="cf7_payfast_cancel_url"
+            value="<?= $this->arrayGet($formPayfastSettings, 'cancel_url') ?>"/>
+        </label>
+      </p>
+  </fieldset><?php
+
   }
 
 
@@ -517,19 +706,7 @@ class CF7_Payfast_Plugin
     else
     {
       // Default settings
-      $payFastSettings = array(
-        'mode'              => 'SANDBOX',
-        'return_page_id'    => 0,
-        'return_url'        => esc_url(get_site_url(null, 'payment-successful')),
-        'cancel_page_id'    => 0,
-        'cancel_url'        => esc_url(get_site_url(null, 'payment-canceled')),
-        'merchant_id_live'  => '',
-        'merchant_key_live' => '',
-        'passphrase_live'   => '',
-        'merchant_id_test'  => '10005824',
-        'merchant_key_test' => 'l9p20jqbzs762',
-        'passphrase_test'   => ''
-      );
+      $payFastSettings = $this->getDefaultSettings();
 
       if ( ! add_post_meta($newFormPostID, '_cf7_payfast_settings', $payFastSettings, true))
       {
@@ -545,19 +722,20 @@ class CF7_Payfast_Plugin
    */
   public function afterContactFormSave($contactForm)
   {
-    $cf7PostID = $contactForm->id();
-
     if (empty($_POST)) { return; }
-
-    if (isset($_POST['cf7-payfast-success-page-id']))
-    {
-      // Verify that the nonce is valid.
-      if (wp_verify_nonce($_POST['cf7_payfast_metaboxes_nonce'], 'cf7_payfast_metaboxes'))
-      {
-        // Update the stored value
-        // update_post_meta( $contact_form_id, '_cf7_payfast_key', $_POST['cf7-redirect-page-id'] );
-      }
-    }
+    $settings['mode']              = $this->arrayGet($_POST, 'cf7_payfast_mode');
+    $settings['product']           = $this->arrayGet($_POST, 'cf7_payfast_product');
+    $settings['merchant_id_test']  = $this->arrayGet($_POST, 'cf7_payfast_merchant_id_test');
+    $settings['merchant_key_test'] = $this->arrayGet($_POST, 'cf7_payfast_merchant_key_test');
+    $settings['passphrase_test']   = $this->arrayGet($_POST, 'cf7_payfast_passphrase_test');
+    $settings['merchant_id_live']  = $this->arrayGet($_POST, 'cf7_payfast_merchant_id_live');
+    $settings['merchant_key_live'] = $this->arrayGet($_POST, 'cf7_payfast_merchant_key_live');
+    $settings['passphrase_live']   = $this->arrayGet($_POST, 'cf7_payfast_passphrase_live');
+    $settings['return_page_id']    = $this->arrayGet($_POST, 'cf7_payfast_return_page_id');
+    $settings['return_url']        = $this->arrayGet($_POST, 'cf7_payfast_return_url');
+    $settings['cancel_page_id']    = $this->arrayGet($_POST, 'cf7_payfast_cancel_page_id');
+    $settings['cancel_url']        = $this->arrayGet($_POST, 'cf7_payfast_cancel_url');
+    update_post_meta($contactForm->id(), '_cf7_payfast_settings', $settings);
   }
 
 
@@ -593,54 +771,59 @@ class CF7_Payfast_Plugin
 
       $paymentDataStoreKey = 'cf7-pf-' . $this->uniqid();
 
-      $payfastSettings = get_post_meta($cf7PostID, '_cf7_payfast_settings', true);
-      if (empty($payfastSettings))
+      $settings = get_post_meta($cf7PostID, '_cf7_payfast_settings', true);
+      if (empty($settings))
       {
         throw new Exception('CF7 beforeSendMail(), Payfast Settings cannot be empty!');
       }
 
-      $passphrase = $payfastSettings['passphrase_test'];
+      $passphrase = $this->arrayGet($settings, 'passphrase_test', '');
 
       // [0], because `method` is a select-type field and hence
       // stored as an array of selected options in $_REQUEST / $_POST
       $payMethod = $this->arrayGet($payment, 'method', ['none'])[0];
-
-      $payment['id'] = $this->wpdbInsertPayment($payment, $log);
+      $payment['method'] = $payMethod; // Must be scalar to save to DB!
 
       $remote_ip = $submission->get_meta('remote_ip');
       if ( ! $remote_ip) { $remote_ip = 'noip'; }
       $payment['remote_ip'] = $remote_ip;
 
+      $payment['id'] = $this->wpdbInsertPayment($payment, $log);
+
       // SETUP PAYFAST SERVICE
       $payfast = new OneFile\PayFast(
-        $this->arrayGet($payfastSettings, 'mode'),
+        $this->arrayGet($settings, 'mode'),
         ['logger' => $log, 'debug' => true]
       );
 
-      $itnData['merchantId']     = $this->arrayGet($payfastSettings, 'merchant_id_test');
-      $itnData['merchantKey']    = $this->arrayGet($payfastSettings,'merchant_key_test');
-      $itnData['return_url']     = $this->arrayGet($payfastSettings,'return_url');
-      $itnData['cancel_url']     = $this->arrayGet($payfastSettings,'cancel_url');
+      $itnData['merchant_id']    = $this->arrayGet($settings, 'merchant_id_test');
+      $itnData['merchant_key']   = $this->arrayGet($settings, 'merchant_key_test');
+      $itnData['return_url']     = $this->arrayGet($settings, 'return_url');
+      $itnData['cancel_url']     = $this->arrayGet($settings, 'cancel_url');
       $itnData['notify_url']     = esc_url(admin_url('admin-post.php'));
-      $itnData['name_first]']    = $this->arrayGet($payfastSettings, 'firstname_test', 'Test');
-      $itnData['name_last']      = $this->arrayGet($payfastSettings, 'lastname_test', 'User');
-      $itnData['email_address']  = $this->arrayGet($payfastSettings, 'email_test', 'sbtu01@payfast.co.za');
-      $itnData['cell_number']    = $this->arrayGet($payfastSettings, 'phone_test', '0820000000');
-      $itnData['m_payment_id']   = $this->arrayGet($payment, 'id', 0);
-      $itnData['amount']         = $this->arrayGet($payment, 'amount', 9999);
-      $itnData['item_name']      = $this->arrayGet($payment, 'product', 'No Product Description'); // 'GHEX AFRICA - Donation towards Conference costs'
+      $itnData['name_first']     = $this->arrayGet($settings, 'firstname_test', 'Test');
+      $itnData['name_last']      = $this->arrayGet($settings, 'lastname_test', 'User');
+      $itnData['email_address']  = $this->arrayGet($settings, 'email_test', 'sbtu01@payfast.co.za');
+      $itnData['cell_number']    = $this->arrayGet($settings, 'phone_test', '0820000000');
+      $itnData['m_payment_id']   = $this->arrayGet($payment , 'id', 0);
+      $itnData['amount']         = $this->arrayGet($payment , 'amount', 9999);
+      $itnData['item_name']      = $this->arrayGet($settings, 'product', 'No Product Description');
       $itnData['custom_int1']    = $cf7PostID;
       $itnData['custom_str1']    = $paymentDataStoreKey;
       $itnData['payment_method'] = ($payMethod == 'EFT') ? 'eft' : 'cc';  // eft,cc,dd,bc,mp,mc,cd
 
       if ( ! $payfast->sandboxMode)
       {
-        $passphrase = $payfastSettings['passphrase_live'];
-        $itnData['name_first]']   = $this->arrayGet($payment, 'firstname', 'noname');
-        $itnData['name_last']     = $this->arrayGet($payment, 'lastname' , 'noname');
-        $itnData['email_address'] = $this->arrayGet($payment, 'email', 'nomail@payfast.co.za');
-        $itnData['cell_number']   = $this->arrayGet($payment, 'phone', '0820000000');
+        $itnData['merchant_id']   = $this->arrayGet($settings, 'merchant_id_live');
+        $itnData['merchant_key']  = $this->arrayGet($settings, 'merchant_key_live');
+        $itnData['name_first]']   = $this->arrayGet($payment , 'firstname', 'noname');
+        $itnData['name_last']     = $this->arrayGet($payment , 'lastname' , 'noname');
+        $itnData['email_address'] = $this->arrayGet($payment , 'email', 'nomail@payfast.co.za');
+        $itnData['cell_number']   = $this->arrayGet($payment , 'phone', '0820000000');
+        $passphrase = $this->arrayGet($settings, 'passphrase_live', '');
       }
+
+      $log->before_mail('Payfast itnData = ' . print_r($itnData, true));
 
       $itnDataAsString = $payfast->stringifyItnData($itnData, 'removeEmptyItems');
       $itnSignature = $payfast->generateItnSignature($itnDataAsString, $passphrase);
