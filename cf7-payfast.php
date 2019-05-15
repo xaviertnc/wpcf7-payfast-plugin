@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Contact Form 7 - PayFAST integration
  * Description: A Contact Form 7 extension that redirects to PayFAST on submit.
- * Version: 1.2.0
+ * Version: 1.2.1
  * Author: C. Moller
  * Author URI: http://www.webchamp.co.za
  * License: GPLv3
@@ -236,7 +236,7 @@ class CF7_Payfast_Plugin
     $paymentID = $this->arrayGet($payment, 'id', 0);
     $data = array(
       'status'       => $this->arrayGet($payment, 'status'),
-      'payfast_ref'  => $this->arrayGet($payment, 'pf_payment_id'),
+      'payfast_ref'  => $this->arrayGet($payment, 'payfast_ref'),
       'payfast_fee'  => $this->arrayGet($payment, 'payfast_fee'),
       'amount_net'   => $this->arrayGet($payment, 'amount_net'),
       'confirmed_at' => current_time('mysql')
@@ -269,7 +269,7 @@ class CF7_Payfast_Plugin
       method varchar(32) NOT NULL,
       cf7_form_ref varchar(65) NULL,
       amount decimal(10,2) NOT NULL,
-      payfast_ref int(11) NULL,
+      payfast_ref varchar(64) NULL,
       fullname varchar(64) NULL,
       firstname varchar(32) NULL,
       lastname varchar(32) NULL,
