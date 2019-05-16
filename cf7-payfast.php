@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Contact Form 7 - PayFAST integration
  * Description: A Contact Form 7 extension that redirects to PayFAST on submit.
- * Version: 1.2.1
+ * Version: 1.2.2
  * Author: C. Moller
  * Author URI: http://www.webchamp.co.za
  * License: GPLv3
@@ -90,7 +90,7 @@ class CF7_Payfast_Plugin
         'return_page_id'    => 0,
         'return_url'        => esc_url(get_site_url(null, 'payment-successful')),
         'cancel_page_id'    => 0,
-        'cancel_url'        => esc_url(get_site_url(null, 'payment-canceled')),
+        'cancel_url'        => esc_url(get_site_url(null, 'payment-cancelled')),
         'merchant_id_live'  => '',
         'merchant_key_live' => '',
         'passphrase_live'   => '',
@@ -747,7 +747,7 @@ class CF7_Payfast_Plugin
   public function beforeSendMail($contactForm)
   {
     $log = new OneFile\Logger(__DIR__);
-    $log->setFilename('debug_' . $log->getDate() .  '.log');
+    $log->setFilename('debug_' . $log->getDate() .  '_log.php');
 
     $submission = WPCF7_Submission::get_instance();
     if ( ! $submission) { return; }
@@ -816,11 +816,17 @@ class CF7_Payfast_Plugin
       {
         $itnData['merchant_id']   = $this->arrayGet($settings, 'merchant_id_live');
         $itnData['merchant_key']  = $this->arrayGet($settings, 'merchant_key_live');
-        $itnData['name_first]']   = $this->arrayGet($payment , 'firstname', 'noname');
+        $itnData['name_first']    = $this->arrayGet($payment , 'firstname', 'noname');
         $itnData['name_last']     = $this->arrayGet($payment , 'lastname' , 'noname');
         $itnData['email_address'] = $this->arrayGet($payment , 'email', 'nomail@payfast.co.za');
         $itnData['cell_number']   = $this->arrayGet($payment , 'phone', '0820000000');
         $passphrase = $this->arrayGet($settings, 'passphrase_live', '');
+      }
+      else
+      {
+        $message = $this->arrayGet($payment, 'message', '');
+        $message = '[TEST MODE] ' . $message;
+        $payment['message'] = $message;
       }
 
       $log->before_mail('Payfast itnData = ' . print_r($itnData, true));
