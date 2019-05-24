@@ -215,7 +215,7 @@ class CF7_Payfast_Plugin
     }
     elseif ( ! empty($data['lastname']))
     {
-      $data['fullname'] = $firstname . ' ' . data['lastname'];
+      $data['fullname'] = $firstname . ' ' . $data['lastname'];
     }
     else
     {
